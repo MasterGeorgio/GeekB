@@ -1,6 +1,8 @@
 #include "stdafx.h"
 #include "Crypto.h"
 
+#include <iostream>
+
 // Отладка
 //#define DBG_CRYPTO
 
@@ -33,17 +35,19 @@ Crypto::~Crypto()
 //-------------------------------------------------------------
 /// Инициализация алгоритма
 /// Функция инициализации
+/// Initialization
 int Crypto::Init(
 	uint8_t *pucKey,
 	uint8_t *pucTabP,
 	uint8_t *pucTabS)
 {
 
-	int nRes = ALG_SUSSECS_SP;
+	int nRes = ALG_SUCCESS_SP;
 
 	if (pucKey == nullptr)
 	{
 		nRes = ERR_NOT_KEY;
+		return nRes;
 	}
 	else
 	{
@@ -51,11 +55,21 @@ int Crypto::Init(
 			m_aucKey[i] = pucKey[i];
 
 		isKey = true;
-		//.. усложнение К?
+	}
+
+	// Усложнение ключа
+	// Key complication
+	for (size_t i = 0; i < 16; i++)
+	{
+		Tack();
+		memcpy(m_aucKey, m_aucReg, sizeof(m_aucKey));
 	}
 
 	/// Инициализация долговременных параметров
-	/// Таблица подстановок
+        /// Initialization long parametrs
+        ///
+        /// Таблица подстановок
+        /// Tab Substitute
 	uint8_t aucSbox[] = {
 		0xFC, 0xEE, 0xDD, 0x11, 0xCF, 0x6E, 0x31, 0x16, 0xFB, 0xC4, 0xFA, 0xDA, 0x23, 0xC5, 0x04, 0x4D,
 		0xE9, 0x77, 0xF0, 0xDB, 0x93, 0x2E, 0x99, 0xBA, 0x17, 0x36, 0xF1, 0xBB, 0x14, 0xCD, 0x5F, 0xC1,
@@ -76,6 +90,7 @@ int Crypto::Init(
 	};
 
 	/// Таблица перестановок
+        /// Tab Permutation
 	uint8_t aucPbox[] = {
 		0,  8,
 		1,  9,
@@ -98,7 +113,7 @@ int Crypto::Init(
 		for (int i = 0; i < SIZE_TAB_P; i++)
 			m_aucPbox[i] = pucTabP[i];
 
-		nRes ^= ALG_SUSSECS_P;
+		nRes ^= ALG_SUCCESS_P;
 	}
 
 	if (pucTabS != nullptr)
@@ -106,8 +121,13 @@ int Crypto::Init(
 		for (int i = 0; i < SIZE_TAB_S; i++)
 			m_aucSbox[i] = pucTabS[i];
 
-		nRes ^= ALG_SUSSECS_S;
+		nRes ^= ALG_SUCCESS_S;
 	}
+	
+	// .. Обратные таблицы к SP
+	// Inverse Tab Substitute
+	for (int j = 0; j < sizeof(m_aucSboxInv); j++)
+		m_aucSboxInv[m_aucSbox[j]] = j;
 
 	return nRes;
 }
@@ -115,39 +135,51 @@ int Crypto::Init(
 
 
 //-------------------------------------------------------------
-/// Функция зашифрования
+/// Функция зашифрования по схеме XPS над регистром
+/// Encode function on the scheme XPS over Reg
 int Crypto::Encode(
-	uint8_t  *pucDataIn,
-	uint64_t ullLeingth,
-	uint8_t  *pucDataOut)
+        const uint8_t  *pucDataIn,
+        const uint64_t ullLeingth,
+        uint8_t        *pucDataOut)
 {
-	int nRes = ALG_SUSSECS;
+    int nRes = ALG_SUCCESS;
 
-	if (!isKey)
-		return ERR_NOT_KEY;
+    // Key must be avialable
+    if (!isKey)
+        return ERR_NOT_KEY;
 
-	if ((pucDataIn  == nullptr) ||
+	// Data must be avialable
+    if ((pucDataIn  == nullptr) ||
 		(pucDataOut == nullptr))
-		return ERR_NOT_DATA;
+            return ERR_NOT_DATA;
 
-	/// Инциализация регитсра шифрования
-	for (int i = 0; i < SIZE_KEY; i++)
-		m_aucReg[i] = m_aucKey[i];
+    /// Инциализация регистра шифрования
+    /// Init work registr cypher
+    for (size_t i = 0; i < SIZE_KEY; i++)
+            m_aucReg[i] = m_aucKey[i];
 
 #ifdef DBG_CRYPTO
-	uint8_t aucIn[SIZE_BLOCK * 8];
-	for (uint64_t i = 0; i < ullLeingth; i++)
-		aucIn[i] = pucDataIn[i];
-	uint8_t aucOut[SIZE_BLOCK * 8];
-	for (uint64_t i = 0; i < ullLeingth; i++)
-		aucOut[i] = pucDataOut[i];
+    uint8_t aucIn[SIZE_BLOCK * 8];
+    for (uint64_t i = 0; i < ullLeingth; i++)
+            aucIn[i] = pucDataIn[i];
+    uint8_t aucOut[SIZE_BLOCK * 8];
+    for (uint64_t i = 0; i < ullLeingth; i++)
+            aucOut[i] = pucDataOut[i];
 #endif
-	
-	for (uint64_t i = 0; i < ullLeingth; i += SIZE_BLOCK)
-	{
-		/// Такт работы схемы SPX шифра
-		Tack();
 
+#ifdef DBG_CRYPTO
+	std::cout << "Gamma:\n";
+#endif
+    for (size_t i = 0; i < ullLeingth; i += SIZE_BLOCK)
+    {
+		/// Такт работы схемы XPS шифра
+		/// One tack work XPS scheme
+		for (size_t j = 0; j < 16; j++)
+			Tack();
+
+#ifdef DBG_CRYPTO
+		std::cout << i << " gamma:\n";
+#endif
 		for (uint8_t j = 0; j < SIZE_BLOCK; j++)
 		{
 			*pucDataOut++ = m_aucReg[j] ^ *pucDataIn++;
@@ -155,84 +187,217 @@ int Crypto::Encode(
 #ifdef DBG_CRYPTO
 			aucOut[i + j] = aucIn[i + j] ^ m_aucReg[j];
 #endif
+#ifndef DBG_CRYPTO
+			std::cout << std::showbase << std::hex << std::uppercase << (int)m_aucReg[j] << "\t";
+#endif
 		}
+#ifndef DBG_CRYPTO
+		std::cout << "\n";
+#endif
 	}
 
-	return nRes;
+    return nRes;
 }
 
 //-------------------------------------------------------------
-/// Функция расшифрования
+/// Функция расшифрования по схеме XPS над регистром
+/// Decode function on the scheme XPS over Reg
 int Crypto::Decode(
-	uint8_t  *pucDataIn,
-	uint64_t ullLeingth,
-	uint8_t  *pucDataOut)
+        const uint8_t  *pucDataIn,
+        const uint64_t ullLeingth,
+        uint8_t        *pucDataOut)
 {
 	int nRes = Encode(
 		pucDataIn,
 		ullLeingth,
 		pucDataOut);
 
-	return 0;
+	return nRes;
 }
 
 //-------------------------------------------------------------
+/// Функция зашифрования по схеме XPS над данными
+/// Encode function on the scheme XPS over data
+int Crypto::EncodeAlpha(
+        const uint8_t  *pucDataIn,
+        const uint64_t ullLeingth,
+        uint8_t        *pucDataOut)
+{
+    int nRes = ALG_SUCCESS;
+
+	// Key must be avialable
+    if (!isKey)
+        return ERR_NOT_KEY;
+
+	// Data must be avialable
+    if ((pucDataIn  == nullptr) ||
+       (pucDataOut == nullptr))
+        return ERR_NOT_DATA;
+
+#ifdef DBG_CRYPTO
+    uint8_t aucIn[SIZE_BLOCK * 8];
+    for (uint64_t i = 0; i < ullLeingth; i++)
+            aucIn[i] = pucDataIn[i];
+    uint8_t aucOut[SIZE_BLOCK * 8];
+    for (uint64_t i = 0; i < ullLeingth; i++)
+            aucOut[i] = pucDataOut[i];
+#endif
+
+    for (size_t i = 0; i < ullLeingth; i += SIZE_BLOCK)
+    {
+        //////////////////////////////
+        // One tack work XPS scheme
+        // Substitute operation
+        /// Registr
+        uint8_t aucReg[SIZE_BLOCK] = {0};
+        for (size_t j = 0; j < sizeof (aucReg); j++)
+            aucReg[j] = m_aucSbox[ pucDataIn[i + j] ];
+
+        // Permute operation
+        for (size_t j = 0; j < sizeof (aucReg); j++)
+                pucDataOut[i + j] = aucReg[m_aucPbox[j]];
+
+        // Xor operation
+        for (size_t j = 0; j < SIZE_BLOCK; j++)
+        {
+            pucDataOut[i + j] ^= m_aucKey[j];
+
+#ifdef DBG_CRYPTO
+            aucOut[i + j] ^= aucReg[j];
+#endif
+        }
+        //////////////////////////////
+    }
+
+    return nRes;
+}
+
+/// Функция расшифрования по схеме XPS над данными
+/// Decode function on the scheme XPS over data
+int Crypto::DecodeAlpha(
+	const uint8_t  *pucDataIn,
+	const uint64_t ullLeingth,
+	uint8_t        *pucDataOut)
+{
+    int nRes = ALG_SUCCESS;
+
+    // Key avialable
+    if (!isKey)
+        return ERR_NOT_KEY;
+
+    // Data avialable
+    if ((pucDataIn  == nullptr) ||
+       (pucDataOut == nullptr))
+        return ERR_NOT_DATA;
+
+#ifdef DBG_CRYPTO
+    uint8_t aucIn[SIZE_BLOCK * 8];
+    for (uint64_t i = 0; i < ullLeingth; i++)
+            aucIn[i] = pucDataIn[i];
+    uint8_t aucOut[SIZE_BLOCK * 8];
+    for (uint64_t i = 0; i < ullLeingth; i++)
+            aucOut[i] = pucDataOut[i];
+#endif
+
+    for (size_t i = 0; i < ullLeingth; i += SIZE_BLOCK)
+    {
+        //////////////////////////////
+        // One tack work XPS scheme inverse for alg Alpha
+
+		// Xor operation
+		for (size_t j = 0; j < SIZE_BLOCK; j++)
+		{
+			pucDataOut[i + j] = pucDataIn[i + j] ^ m_aucKey[j];
+
+#ifdef DBG_CRYPTO
+			aucOut[i + j] ^= aucReg[j];
+#endif
+		}
+
+		/// Registr
+		uint8_t aucReg[SIZE_BLOCK] = { 0 };
+		// Permute operation
+		for (size_t j = 0; j < sizeof(aucReg); j++)
+			aucReg[m_aucPbox[ j ]] = pucDataOut[i + j];
+
+        // Substitute operation
+        for (size_t j = 0; j < sizeof (aucReg); j++)
+			pucDataOut[i + j] = m_aucSboxInv[aucReg[ j ]];
+
+        //////////////////////////////
+    }
+
+    return nRes;
+}
+
+
+//-------------------------------------------------------------
 /// Такт
+/// One tact cypher
 void Crypto::Tack()
 {
+	// Substitute operation
 	Substitute();
 
+	// Permute operation
 	Permute();
 
-	for (int i = 0; i < SIZE_KEY; i++)
+	// Xor operation
+	for (size_t i = 0; i < SIZE_KEY; i++)
 		m_aucReg[i] ^= m_aucKey[i];
 }
 
 //-------------------------------------------------------------
 /// Операция подстановоки
+/// Substitute operation
 void Crypto::Substitute()
 {
-	for (int i = 0; i < SIZE_KEY; i++)
+	for (size_t i = 0; i < SIZE_KEY; i++)
 		m_aucReg[i] = m_aucSbox[ m_aucReg[i] ];
 }
 
 //-------------------------------------------------------------
 /// Операция перестановки
+/// Permute operation
 void Crypto::Permute()
 {
 	uint8_t aucResult[SIZE_TAB_P];
-	for (int i = 0; i < SIZE_TAB_P; i++)
+	for (size_t i = 0; i < SIZE_TAB_P; i++)
 		aucResult[i] = m_aucReg[m_aucPbox[i]];
 
-	for (int i = 0; i < SIZE_KEY; i++)
+	for (size_t i = 0; i < SIZE_KEY; i++)
 		m_aucReg[i] = aucResult[i];
 }
 
 //-------------------------------------------------------------
 /// Тест
+/// Control check algorithm
 int Crypto::Test()
 {
-	int nRes = ALG_SUSSECS;
+	int nRes = ALG_SUCCESS;
 
 	/// К
-	uint8_t pucKey[SIZE_KEY] = {
+        /// Key
+	uint8_t aucKey[] = {
 		0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
 		0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF,
 	};
 
 	/// Открытые данные
-	uint8_t aucDataIn[SIZE_BLOCK] = {
+        /// Open text
+	uint8_t aucDataIn[] = {
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	};
 
 	/// Закрытые данные
+        /// Close text
 	uint8_t aucDataOut[sizeof(aucDataIn)] = {
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	};
 
-	nRes = Init(pucKey);
+	nRes = Init(aucKey);
 
 	uint8_t aucVerify[sizeof(aucDataIn)] = {
 		0xFC, 0xC6, 0x55, 0xDB, 0x21, 0X6D, 0xC8, 0xA0,
@@ -244,18 +409,18 @@ int Crypto::Test()
 		sizeof(aucDataIn),
 		aucDataOut);
 
-	for (int i = 0; i < SIZE_KEY; i++)
+	for (size_t i = 0; i < sizeof(aucDataIn); i++)
 		if (aucVerify[i] != aucDataOut[i])
 		{
 			nRes = ERR_TEST_VERIFY;
 			break;
 		}
 
-/**
+/**/
 	nRes = Decode(
 		aucDataOut,
 		sizeof(aucDataOut),
-		aucDataIn);
+		aucDataOut);
 /**/
 
 	return nRes;
